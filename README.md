@@ -1,0 +1,1 @@
+# AdGuardHome-Rule-Merger
