@@ -1,21 +1,19 @@
 import requests
 import re
+from collections import defaultdict
 from config import UPSTREAM_RULES, OUTPUT_FILE, SUPPORTED_RULE_TYPES, EXCLUDED_PREFIXES
 
 def download_rule(url: str) -> list[str]:
     """下载单个上游规则，返回有效规则列表（过滤注释/空行）"""
     try:
-        # 增加请求头，模拟浏览器访问（避免部分服务器拒绝爬虫）
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        response = requests.get(url, headers=headers, timeout=60)  # 超时时间延长到 60 秒
-        response.raise_for_status()  # 抛出 HTTP 错误
-        # 处理编码问题（部分规则文件编码非 UTF-8）
+        response = requests.get(url, headers=headers, timeout=60)
+        response.raise_for_status()
         response.encoding = response.apparent_encoding or "utf-8"
-        rules = response.text.split("\n")  # 按行分割
-        # 过滤：空行、注释行（以 EXCLUDED_PREFIXES 前3个前缀开头）
-        comment_prefixes = EXCLUDED_PREFIXES[:3]  # 取前3个注释前缀（! # //）
+        rules = response.text.split("\n")
+        comment_prefixes = EXCLUDED_PREFIXES[:3]
         valid_rules = [
             rule.strip() for rule in rules
             if rule.strip() and not rule.strip().startswith(comment_prefixes)
@@ -33,84 +31,131 @@ def download_rule(url: str) -> list[str]:
         return []
 
 def convert_hosts_to_adguard(rule: str) -> str | None:
-    """将 Hosts 规则（0.0.0.0 域名 / 127.0.0.1 域名）转换为 AdGuard 规则 ||域名^"""
-    # 匹配 Hosts 格式：IP + 空格 + 域名（忽略后面的注释）
+    """将 Hosts 规则转换为 AdGuard 规则 ||域名^"""
     hosts_pattern = r"^(0\.0\.0\.0|127\.0\.0\.1|::1)\s+([a-zA-Z0-9.-]+\.[a-zA-Z]+)"
     match = re.match(hosts_pattern, rule)
     if match:
         domain = match.group(2)
-        return f"||{domain}^"  # 转换为 AdGuard 标准屏蔽规则
+        return f"||{domain}^"
     return None
 
-def is_supported_rule(rule: str) -> bool:
-    """判断规则是否为 AdGuard Home 支持的类型"""
-    for prefix in SUPPORTED_RULE_TYPES.keys():
-        if rule.startswith(prefix):
-            return True
-    return False
-
-def extract_domain(rule: str) -> str | None:
-    """从规则中提取核心域名（用于黑白名单冲突判断）"""
-    # 处理 AdGuard 规则（支持带参数的规则，如 ||baidu.com^$third-party）
-    adguard_pattern = r"^(@@)?\|\|([a-zA-Z0-9.-]+\.[a-zA-Z]+)\^"
-    match = re.match(adguard_pattern, rule)
-    if match:
-        return match.group(2)  # 返回域名部分
-    # 处理 Hosts 规则（已转换前，此处备用）
-    hosts_pattern = r"^(0\.0\.0\.0|127\.0\.0\.1|::1)\s+([a-zA-Z0-9.-]+\.[a-zA-Z]+)"
-    match = re.match(hosts_pattern, rule)
-    if match:
-        return match.group(2)
-    return None
+def extract_rule_parts(rule: str) -> tuple[str, str, bool, bool]:
+    """解析规则：返回（基础域名/泛化域名, 完整规则, 是否白名单, 是否带important）"""
+    # 匹配白名单规则 @@||域名^$参数 或 @@||域名^
+    whitelist_pattern = r"^@@\|\|([a-zA-Z0-9.-]+\.[a-zA-Z]+)(\^.*)?$"
+    # 匹配黑名单规则 ||域名^$参数 或 ||域名^
+    blacklist_pattern = r"^\|\|([a-zA-Z0-9.-]+\.[a-zA-Z]+)(\^.*)?$"
+    
+    is_whitelist = False
+    has_important = False
+    base_domain = ""
+    generalized_domain = ""
+    
+    # 处理白名单
+    whitelist_match = re.match(whitelist_pattern, rule)
+    if whitelist_match:
+        is_whitelist = True
+        base_domain = whitelist_match.group(1)
+        params = whitelist_match.group(2) or ""
+        if "$important" in params:
+            has_important = True
+    else:
+        # 处理黑名单
+        blacklist_match = re.match(blacklist_pattern, rule)
+        if blacklist_match:
+            base_domain = blacklist_match.group(1)
+            params = blacklist_match.group(2) or ""
+            if "$important" in params:
+                has_important = True
+    
+    if base_domain:
+        # 生成泛化域名（如 a36243.actonservice.com → a*.actonservice.com）
+        # 匹配：前缀+数字+后缀.主域名
+        num_pattern = r"^([a-zA-Z]+)\d+\.(.*)$"
+        num_match = re.match(num_pattern, base_domain)
+        if num_match:
+            generalized_domain = f"{num_match.group(1)}*.{num_match.group(2)}"
+        else:
+            generalized_domain = base_domain
+    
+    return (generalized_domain, rule, is_whitelist, has_important)
 
 def merge_rules(all_rules: list[str]) -> list[str]:
-    """整合规则：格式转换、去重、黑白名单冲突处理"""
-    rule_map = {}  # key: 域名, value: 规则（优先保留白名单）
+    """整合规则：泛化合并、黑白名单冲突处理、优先级保留"""
+    rule_groups = defaultdict(dict)  # key: 泛化域名, value: {is_whitelist: {has_important: rule}}
     
     for rule in all_rules:
-        # 1. 转换 Hosts 规则为 AdGuard 格式
+        # 转换 Hosts 规则
         converted_rule = convert_hosts_to_adguard(rule)
         final_rule = converted_rule if converted_rule else rule
         
-        # 2. 过滤不支持的规则
-        if not is_supported_rule(final_rule):
+        # 过滤不支持的规则
+        if not any(final_rule.startswith(prefix) for prefix in ["||", "@@||"]):
             continue
         
-        # 3. 提取域名，处理黑白名单冲突
-        domain = extract_domain(final_rule)
-        if not domain:
-            continue  # 无法提取域名的规则跳过
+        # 解析规则部分
+        generalized_domain, full_rule, is_whitelist, has_important = extract_rule_parts(final_rule)
+        if not generalized_domain:
+            continue
         
-        # 4. 优先级：白名单（@@开头）> 黑名单，相同域名保留白名单
-        if domain in rule_map:
-            # 若已有规则是白名单，跳过当前规则（无论黑白）
-            if rule_map[domain].startswith("@@"):
-                continue
-            # 若当前规则是白名单，覆盖已有黑名单
-            if final_rule.startswith("@@"):
-                rule_map[domain] = final_rule
+        # 按泛化域名分组处理
+        domain_group = rule_groups[generalized_domain]
+        
+        # 白名单优先级 > 黑名单
+        if is_whitelist:
+            # 白名单内部：带important优先级更高
+            if is_whitelist not in domain_group:
+                domain_group[is_whitelist] = {}
+            # 保留带important的规则，或更新为带important的规则
+            if has_important or not domain_group[is_whitelist]:
+                domain_group[is_whitelist][has_important] = full_rule
         else:
-            # 新域名，直接添加
-            rule_map[domain] = final_rule
+            # 黑名单：仅当没有白名单时才处理
+            if True not in domain_group:  # 无白名单
+                if is_whitelist not in domain_group:
+                    domain_group[is_whitelist] = {}
+                # 黑名单内部：带important优先级更高
+                if has_important or not domain_group[is_whitelist]:
+                    domain_group[is_whitelist][has_important] = full_rule
     
-    # 5. 去重后返回规则列表（按域名排序，便于查看）
-    sorted_rules = sorted(rule_map.values(), key=lambda x: extract_domain(x) or x)
-    return sorted_rules
+    # 生成最终规则列表
+    final_rules = []
+    for domain, groups in rule_groups.items():
+        # 优先选择白名单
+        if True in groups:  # 存在白名单
+            whitelist_group = groups[True]
+            # 优先选择带important的白名单
+            if True in whitelist_group:
+                final_rules.append(whitelist_group[True])
+            else:
+                final_rules.append(next(iter(whitelist_group.values())))
+        else:  # 仅黑名单
+            blacklist_group = groups[False]
+            # 优先选择带important的黑名单
+            if True in blacklist_group:
+                final_rules.append(blacklist_group[True])
+            else:
+                final_rules.append(next(iter(blacklist_group.values())))
+    
+    # 按域名排序
+    final_rules.sort()
+    return final_rules
 
 def generate_final_file(rules: list[str]):
-    """生成最终的合并规则文件，添加头部说明"""
+    """生成最终的合并规则文件"""
     header = f"""# AdGuard Home 合并规则文件
-# 自动生成：下载上游规则 → 格式转换 → 去重 → 冲突处理
+# 自动生成：下载上游规则 → 格式转换 → 泛化合并 → 冲突处理
 # 上游规则来源：
 {chr(10).join([f"- {url}" for url in UPSTREAM_RULES])}
 # 规则数量：{len(rules)}
 # 维护者：guandasheng（GitHub 用户名）
 # 定时更新：每 8 小时自动同步上游规则
-# 说明：
+# 优化说明：
 # 1. Hosts 规则已转换为 AdGuard 格式（||域名^）
-# 2. 已剔除 AdGuard Home 不支持的规则
-# 3. 黑白名单冲突时，优先保留白名单规则（@@||域名^）
-# 4. 所有规则已去重并按域名排序
+# 2. 数字后缀子域名自动泛化（如 a36243.actonservice.com → a*.actonservice.com）
+# 3. 黑白名单冲突时，优先保留白名单规则
+# 4. 相同域名保留带 $important 优先级的规则
+# 5. 所有规则已去重并按域名排序
 
 """
     
@@ -122,22 +167,18 @@ def generate_final_file(rules: list[str]):
     print(f"📊 最终规则数量：{len(rules)}")
 
 def main():
-    print("===== AdGuard Home 规则整合工具 =====")
+    print("===== AdGuard Home 规则整合工具（优化版） =====")
     print(f"📥 正在下载 {len(UPSTREAM_RULES)} 个上游规则...")
     
-    # 1. 下载所有上游规则
     all_rules = []
     for url in UPSTREAM_RULES:
         rules = download_rule(url)
         all_rules.extend(rules)
     
     print(f"\n📦 总下载规则数：{len(all_rules)}")
-    print("🔧 正在整合规则（转换格式 + 去重 + 冲突处理）...")
+    print("🔧 正在整合规则（泛化合并 + 优先级处理 + 冲突解决）...")
     
-    # 2. 整合规则
     merged_rules = merge_rules(all_rules)
-    
-    # 3. 生成最终文件
     generate_final_file(merged_rules)
 
 if __name__ == "__main__":
