@@ -8,7 +8,6 @@ AdGuard Home 规则自动合并工具，可批量下载上游规则并完成格�
 | 规则总数 | ![Rule Count](https://img.shields.io/badge/dynamic/text?url=https%3A%2F%2Fraw.githubusercontent.com%2Fguandasheng%2FAdGuardHome-Rule-Merger%2Fmain%2Fmerged_rules.txt&query=%2F%23%20%E8%A7%84%E5%88%99%E6%95%B0%E9%87%8F%EF%BC%9A(\d+)&label=有效规则数) |
 | 仓库星标 | ![Stars](https://img.shields.io/github/stars/guandasheng/AdGuardHome-Rule-Merger?style=social) |
 | 访问人数 | ![Visitors](https://visitor-badge.laobi.icu/badge?page_id=guandasheng.AdGuardHome-Rule-Merger) |
-
 ## 合并规则文件
 ### 规则文件地址
 > 可直接选中以下地址复制使用
