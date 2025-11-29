@@ -1,0 +1,35 @@
+name: 自动更新规则（每8小时一次）
+on:
+  schedule:
+    # UTC 时间 0:00、8:00、16:00 运行（对应北京时间 8:00、16:00、0:00）
+    - cron: '0 0 * * *'
+    - cron: '0 8 * * *'
+    - cron: '0 16 * * *'
+  workflow_dispatch:  # 允许手动触发更新
+
+jobs:
+  update-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取仓库代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'  # 稳定版本，兼容所有依赖
+
+      - name: 安装依赖包
+        run: pip install requests
+
+      - name: 运行规则整合脚本
+        run: python main.py
+
+      - name: 自动提交更新后的规则文件
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "✅ 自动更新规则（每8小时同步上游）"  # 提交说明
+          file_pattern: "merged_rules.txt"  # 仅提交规则文件
+          commit_user_name: guandasheng  # 你的 GitHub 用户名
+          commit_user_email: lkjpoikk@163.com  # 你的仓库绑定邮箱
+          commit_author: "guandasheng <lkjpoikk@163.com>"
