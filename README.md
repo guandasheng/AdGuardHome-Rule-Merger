@@ -24,76 +24,32 @@ AdGuard Home 规则自动合并工具，可批量下载上游规则并完成格�
     <tr>
       <td style="padding: 8px; border-bottom: 1px solid #e1e4e8;">原始地址</td>
       <td style="padding: 8px; border-bottom: 1px solid #e1e4e8;">
-        <code style="padding: 6px 8px; background: #f6f8fa; border-radius: 4px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace; font-size: 13px;">
-          https://raw.githubusercontent.com/guandasheng/AdGuardHome-Rule-Merger/refs/heads/main/merged_rules.txt
-        </code>
+        <code style="padding: 6px 8px; background: #f6f8fa; border-radius: 4px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace; font-size: 13px;">https://raw.githubusercontent.com/guandasheng/AdGuardHome-Rule-Merger/refs/heads/main/merged_rules.txt</code>
       </td>
     </tr>
     <tr>
       <td style="padding: 8px; border-bottom: 1px solid #e1e4e8;">通用加速</td>
       <td style="padding: 8px; border-bottom: 1px solid #e1e4e8;">
-        <code style="padding: 6px 8px; background: #f6f8fa; border-radius: 4px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace; font-size: 13px;">
-          https://gh-proxy.org/https://raw.githubusercontent.com/guandasheng/AdGuardHome-Rule-Merger/refs/heads/main/merged_rules.txt
-        </code>
+        <code style="padding: 6px 8px; background: #f6f8fa; border-radius: 4px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace; font-size: 13px;">https://gh-proxy.org/https://raw.githubusercontent.com/guandasheng/AdGuardHome-Rule-Merger/refs/heads/main/merged_rules.txt</code>
       </td>
     </tr>
     <tr>
       <td style="padding: 8px; border-bottom: 1px solid #e1e4e8;">香港加速</td>
       <td style="padding: 8px; border-bottom: 1px solid #e1e4e8;">
-        <code style="padding: 6px 8px; background: #f6f8fa; border-radius: 4px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace; font-size: 13px;">
-          https://hk.gh-proxy.org/https://raw.githubusercontent.com/guandasheng/AdGuardHome-Rule-Merger/refs/heads/main/merged_rules.txt
-        </code>
+        <code style="padding: 6px 8px; background: #f6f8fa; border-radius: 4px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace; font-size: 13px;">https://hk.gh-proxy.org/https://raw.githubusercontent.com/guandasheng/AdGuardHome-Rule-Merger/refs/heads/main/merged_rules.txt</code>
       </td>
     </tr>
     <tr>
       <td style="padding: 8px; border-bottom: 1px solid #e1e4e8;">CDN加速</td>
       <td style="padding: 8px; border-bottom: 1px solid #e1e4e8;">
-        <code style="padding: 6px 8px; background: #f6f8fa; border-radius: 4px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace; font-size: 13px;">
-          https://cdn.gh-proxy.org/https://raw.githubusercontent.com/guandasheng/AdGuardHome-Rule-Merger/refs/heads/main/merged_rules.txt
-        </code>
+        <code style="padding: 6px 8px; background: #f6f8fa; border-radius: 4px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace; font-size: 13px;">https://cdn.gh-proxy.org/https://raw.githubusercontent.com/guandasheng/AdGuardHome-Rule-Merger/refs/heads/main/merged_rules.txt</code>
       </td>
     </tr>
     <tr>
       <td style="padding: 8px;">边缘加速</td>
       <td style="padding: 8px;">
-        <code style="padding: 6px 8px; background: #f6f8fa; border-radius: 4px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace; font-size: 13px;">
-          https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/guandasheng/AdGuardHome-Rule-Merger/refs/heads/main/merged_rules.txt
-        </code>
+        <code style="padding: 6px 8px; background: #f6f8fa; border-radius: 4px; word-break: break-all; font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace; font-size: 13px;">https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/guandasheng/AdGuardHome-Rule-Merger/refs/heads/main/merged_rules.txt</code>
       </td>
     </tr>
   </tbody>
 </table>
-
-<!-- 适配 GitHub 深色模式 -->
-<style>
-@media (prefers-color-scheme: dark) {
-  table td code,
-  table thead th {
-    background: #161b22 !important;
-    color: #e6edf3 !important;
-    border-color: #30363d !important;
-  }
-  table td, table th {
-    border-color: #30363d !important;
-  }
-}
-
-/* 优化表格响应式显示 */
-table {
-  width: 100%;
-  border-collapse: collapse;
-  overflow-x: auto;
-  display: block;
-}
-
-/* 移动端适配 */
-@media (max-width: 768px) {
-  table th {
-    font-size: 12px;
-  }
-  table td code {
-    font-size: 12px !important;
-  }
-}
-</style>
-
