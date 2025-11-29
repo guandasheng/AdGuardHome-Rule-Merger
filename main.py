@@ -5,16 +5,29 @@ from config import UPSTREAM_RULES, OUTPUT_FILE, SUPPORTED_RULE_TYPES, EXCLUDED_P
 def download_rule(url: str) -> list[str]:
     """下载单个上游规则，返回有效规则列表（过滤注释/空行）"""
     try:
-        response = requests.get(url, timeout=30)
+        # 增加请求头，模拟浏览器访问（避免部分服务器拒绝爬虫）
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=60)  # 超时时间延长到 60 秒
         response.raise_for_status()  # 抛出 HTTP 错误
+        # 处理编码问题（部分规则文件编码非 UTF-8）
+        response.encoding = response.apparent_encoding or "utf-8"
         rules = response.text.split("\n")  # 按行分割
-        # 过滤：空行、注释行（以 ! # // 开头）
+        # 过滤：空行、注释行（以 EXCLUDED_PREFIXES 前3个前缀开头）
+        comment_prefixes = EXCLUDED_PREFIXES[:3]  # 取前3个注释前缀（! # //）
         valid_rules = [
             rule.strip() for rule in rules
-            if rule.strip() and not rule.strip().startswith(EXCLUDED_PREFIXES[:3])  # 排除注释
+            if rule.strip() and not rule.strip().startswith(comment_prefixes)
         ]
         print(f"✅ 成功下载 {url} | 有效规则数：{len(valid_rules)}")
         return valid_rules
+    except requests.exceptions.ConnectionError:
+        print(f"❌ 下载失败 {url} | 错误：网络连接超时/无法访问")
+        return []
+    except requests.exceptions.HTTPError as e:
+        print(f"❌ 下载失败 {url} | 错误：HTTP 状态码 {e.response.status_code}")
+        return []
     except Exception as e:
         print(f"❌ 下载失败 {url} | 错误：{str(e)}")
         return []
@@ -38,7 +51,7 @@ def is_supported_rule(rule: str) -> bool:
 
 def extract_domain(rule: str) -> str | None:
     """从规则中提取核心域名（用于黑白名单冲突判断）"""
-    # 处理 AdGuard 规则（||域名^ 或 @@||域名^）
+    # 处理 AdGuard 规则（支持带参数的规则，如 ||baidu.com^$third-party）
     adguard_pattern = r"^(@@)?\|\|([a-zA-Z0-9.-]+\.[a-zA-Z]+)\^"
     match = re.match(adguard_pattern, rule)
     if match:
@@ -88,7 +101,8 @@ def generate_final_file(rules: list[str]):
     """生成最终的合并规则文件，添加头部说明"""
     header = f"""# AdGuard Home 合并规则文件
 # 自动生成：下载上游规则 → 格式转换 → 去重 → 冲突处理
-# 上游规则来源：{chr(10).join([f"- {url}" for url in UPSTREAM_RULES])}
+# 上游规则来源：
+{chr(10).join([f"- {url}" for url in UPSTREAM_RULES])}
 # 规则数量：{len(rules)}
 # 维护者：guandasheng（GitHub 用户名）
 # 定时更新：每 8 小时自动同步上游规则
