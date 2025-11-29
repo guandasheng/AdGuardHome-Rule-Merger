@@ -2,7 +2,7 @@
 UPSTREAM_RULES = [
     "https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt",
     "https://raw.githubusercontent.com/hululu1068/AdGuard-Rule/main/rule/adgh.txt",
-    "https://pan.qzyun.net/f/ERZip/Black.txt",
+    "https://pan.qzyun.net/f/mlQiN/20251129.txt",
 ]
 
 # 输出文件路径（根目录）
