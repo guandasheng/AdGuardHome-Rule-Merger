@@ -143,11 +143,16 @@ def merge_rules(all_rules: list[str]) -> list[str]:
 
 def generate_final_file(rules: list[str]):
     """生成最终的合并规则文件"""
+    # 添加精确到秒的当前时间
+    from datetime import datetime
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # 精确到秒
+    
     header = f"""# AdGuard Home 合并规则文件
 # 自动生成：下载上游规则 → 格式转换 → 泛化合并 → 冲突处理
 # 上游规则来源：
 {chr(10).join([f"- {url}" for url in UPSTREAM_RULES])}
-# 规则数量：{len(rules)}
+# 规则数量：{len(rules)}  # 用于README自动提取
+# 最后更新时间：{current_time}  # 精确到秒，用于README自动提取
 # 维护者：guandasheng（GitHub 用户名）
 # 定时更新：每 8 小时自动同步上游规则
 # 优化说明：
@@ -165,6 +170,7 @@ def generate_final_file(rules: list[str]):
     
     print(f"\n🎉 合并完成！文件已保存至：{OUTPUT_FILE}")
     print(f"📊 最终规则数量：{len(rules)}")
+
 
 def main():
     print("===== AdGuard Home 规则整合工具（优化版） =====")
