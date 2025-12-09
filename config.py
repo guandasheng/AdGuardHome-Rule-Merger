@@ -2,7 +2,7 @@
 UPSTREAM_RULES = [
     "https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt",
     "https://raw.githubusercontent.com/lingeringsound/10007_auto/master/all",
-    "https://pan.qzyun.net/f/mlQiN/20251129.txt",
+    "https://pan.qzyun.net/f/LppT5/20251129.txt",
     "https://anti-ad.net/easylist.txt",
     "https://adrules.top/dns.txt",
 ]
