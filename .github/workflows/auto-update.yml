@@ -21,30 +21,30 @@ jobs:
           python-version: '3.10'
 
       - name: 安装依赖包
-        run: pip install requests dnspython  # 新增dnspython依赖
+        run: pip install requests
 
       - name: 运行规则整合脚本
         run: python main.py
 
-      - name: 提取规则数量和更新时间
+      - name: 提取规则数量和更新时间（修复版）
         run: |
-          # 从 merged_rules.txt 提取规则数量（匹配 "# 规则数量：数字" 行）
-          RULE_COUNT=$(grep -oP '# 规则数量：\K\d+' merged_rules.txt)
-          echo "规则数量: $RULE_COUNT"
+          # 修复：允许冒号后有空格，兼容不同格式
+          RULE_COUNT=$(grep -oP '# 规则数量：\s*\K\d+' merged_rules.txt || echo 0)
+          echo "提取到的规则数量: $RULE_COUNT"
           
-          # 获取当前时间（格式：YYYY-MM-DD HH:MM:SS UTC）
+          # 生成UTC时间，确保格式一致
           LAST_UPDATED=$(date -u "+%Y-%m-%d %H:%M:%S UTC")
-          echo "更新时间: $LAST_UPDATED"
+          echo "生成的更新时间: $LAST_UPDATED"
           
-          # 替换 README 中的占位符
-          sed -i "s/{RULE_COUNT}/$RULE_COUNT/g" README.md
-          sed -i "s/{LAST_UPDATED}/$LAST_UPDATED/g" README.md
+          # 修复：使用更严格的占位符匹配，避免部分替换
+          sed -i "s/最后更新时间：{LAST_UPDATED}/最后更新时间：$LAST_UPDATED/g" README.md
+          sed -i "s/有效规则数：{RULE_COUNT}/有效规则数：$RULE_COUNT/g" README.md
 
       - name: 提交并推送
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add merged_rules.txt README.md resolved_domains.json  # 新增缓存文件提交
+          git add merged_rules.txt README.md
           if git diff --staged --quiet; then
             echo "无更改，跳过提交"
           else
