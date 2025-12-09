@@ -4,8 +4,8 @@ AdGuard Home 规则自动合并工具，可批量下载上游规则并完成格�
 ## 项目数据概览
 | 指标 | 信息 |
 | ---- | ---- |
-| 规则更新时间 | 最后更新时间：2025-11-29 12:19:49 UTC |
-| 规则总数 | 有效规则数：261863 |
+| 规则更新时间 | 最后更新时间：{LAST_UPDATED} |
+| 规则总数 | 有效规则数：{RULE_COUNT} |
 | 仓库星标 | ![Stars](https://img.shields.io/github/stars/guandasheng/AdGuardHome-Rule-Merger?style=social) |
 | 访问人数 | ![Visitors](https://visitor-badge.laobi.icu/badge?page_id=guandasheng.AdGuardHome-Rule-Merger) |
 ## 合并规则文件
