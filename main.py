@@ -2,14 +2,18 @@ import requests
 import re
 import json
 import threading
+import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed  # 移除Thread导入
-from config import UPSTREAM_RULES, OUTPUT_FILE, SUPPORTED_RULE_TYPES, EXCLUDED_PREFIXES, DNS_SERVERS, RESOLVED_CACHE_FILE
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+from config import UPSTREAM_RULES, OUTPUT_FILE, SUPPORTED_RULE_TYPES, EXCLUDED_PREFIXES, DNS_SERVERS, RESOLVED_CACHE_FILE, MYLIST_FILE
 
 # 线程安全的计数器和锁
 progress_counter = 0
 progress_lock = threading.Lock()
 total_rules = 0
+# 新增活跃线程计数器用于监控
+active_threads = 0
+active_threads_lock = threading.Lock()
 
 def load_resolved_cache() -> dict:
     """加载已解析域名的缓存"""
@@ -142,12 +146,12 @@ def merge_rules(all_rules: list[str]) -> list[str]:
     final_rules.sort()
     return final_rules
 
-def resolve_domain(domain: str, dns_servers: list[str], retries: int = 2) -> bool:
-    """解析域名，支持重试和多服务器切换"""
+def resolve_domain(domain: str, dns_servers: list[str], retries: int = 1) -> bool:
+    """解析域名，优化超时设置，减少重试次数"""
     import dns.resolver
     resolver = dns.resolver.Resolver(configure=False)
-    resolver.timeout = 5
-    resolver.lifetime = 10
+    resolver.timeout = 3  # 缩短超时时间
+    resolver.lifetime = 5  # 缩短总生命周期
 
     for _ in range(retries):
         for server in dns_servers:
@@ -159,7 +163,9 @@ def resolve_domain(domain: str, dns_servers: list[str], retries: int = 2) -> boo
                 return False
             except (dns.resolver.Timeout, dns.resolver.NoNameservers, dns.resolver.SERVFAIL):
                 continue
-            except Exception:
+            except Exception as e:
+                # 记录具体错误但不阻塞
+                print(f"⚠️ 解析异常 {domain}@{server}: {str(e)}")
                 continue
     return False
 
@@ -174,77 +180,146 @@ def extract_original_domain(rule: str) -> str:
     return match.group(1) if match else ""
 
 def process_rule(rule: str, resolved_cache: dict, cache_lock: threading.Lock) -> str | None:
-    """处理单个规则（线程安全）"""
-    global progress_counter, total_rules
+    """处理单个规则（线程安全），增加线程监控"""
+    global progress_counter
     
-    original_domain = extract_original_domain(rule)
-    if not original_domain:
-        with progress_lock:
-            global progress_counter
-            progress_counter += 1
-        return rule
+    # 监控活跃线程数
+    with active_threads_lock:
+        global active_threads
+        active_threads += 1
     
-    # 检查缓存
-    with cache_lock:
-        if original_domain in resolved_cache:
-            is_valid = resolved_cache[original_domain]
+    try:
+        original_domain = extract_original_domain(rule)
+        if not original_domain:
             with progress_lock:
                 progress_counter += 1
-            return rule if is_valid else None
-    
-    # 解析域名
-    try:
+            return rule
+        
+        # 检查缓存
+        with cache_lock:
+            if original_domain in resolved_cache:
+                is_valid = resolved_cache[original_domain]
+                with progress_lock:
+                    progress_counter += 1
+                return rule if is_valid else None
+        
+        # 解析域名（新增超时保护）
+        start_time = time.time()
         is_valid = resolve_domain(original_domain, DNS_SERVERS)
+        elapsed = time.time() - start_time
+        
+        # 记录慢查询
+        if elapsed > 3:
+            print(f"⏱️ 慢解析 {original_domain} 耗时 {elapsed:.2f}s")
+        
         with cache_lock:
             resolved_cache[original_domain] = is_valid
         with progress_lock:
             progress_counter += 1
         return rule if is_valid else None
+    
     except Exception as e:
-        print(f" | 解析错误 - {original_domain}: {str(e)}")
+        print(f"❌ 处理错误 {original_domain}: {str(e)}")
         with progress_lock:
             progress_counter += 1
         return rule  # 解析错误时保留规则
+    
+    finally:
+        # 减少活跃线程计数
+        with active_threads_lock:
+            active_threads -= 1
 
 def filter_unresolvable_domains(rules: list[str]) -> list[str]:
-    """多线程过滤无法解析的域名规则"""
-    global total_rules, progress_counter
+    """多线程过滤无法解析的域名规则，增加超时控制和进度监控"""
+    global total_rules, progress_counter, active_threads
     total_rules = len(rules)
     progress_counter = 0
+    active_threads = 0
     resolved_cache = load_resolved_cache()
     cache_lock = threading.Lock()
     valid_rules = []
     
-    print(f"开始过滤无效域名（总规则数：{total_rules}，线程数：100）...")
+    # 计算需要检测的新域名数量
+    new_domains_count = sum(1 for rule in rules 
+                          if extract_original_domain(rule) not in resolved_cache)
+    print(f"开始过滤无效域名（总规则数：{total_rules}，需检测新域名：{new_domains_count}，线程数：50）...")
     
-    with ThreadPoolExecutor(max_workers=100) as executor:
-        futures = [executor.submit(process_rule, rule, resolved_cache, cache_lock) for rule in rules]
+    # 减少线程池大小，避免资源竞争
+    with ThreadPoolExecutor(max_workers=50) as executor:
+        futures = {executor.submit(process_rule, rule, resolved_cache, cache_lock): rule for rule in rules}
+        completed = 0
         
-        for future in as_completed(futures):
-            result = future.result()
-            if result:
-                valid_rules.append(result)
+        # 增加整体超时控制
+        while completed < len(futures):
+            # 每次等待10秒，超时的任务强制取消
+            done, not_done = concurrent.futures.wait(futures, timeout=10)
             
-            # 显示进度
-            with progress_lock:
+            for future in done:
+                try:
+                    result = future.result()
+                    if result:
+                        valid_rules.append(result)
+                    completed += 1
+                except Exception as e:
+                    print(f"⚠️ 任务异常: {str(e)}")
+                    completed += 1
+            
+            # 处理超时未完成的任务
+            for future in not_done:
+                rule = futures[future]
+                domain = extract_original_domain(rule)
+                print(f"⏰ 任务超时 {domain}，强制继续")
+                # 超时任务结果视为有效（避免误删）
+                valid_rules.append(rule)
+                future.cancel()
+                completed += 1
+                with progress_lock:
+                    progress_counter += 1
+            
+            # 实时显示进度和线程状态
+            with progress_lock, active_threads_lock:
                 progress = (progress_counter / total_rules) * 100
-                if progress_counter % 100 == 0 or progress_counter == total_rules:
-                    print(f"\r[{'#' * int(progress / 2)}{'-' * (50 - int(progress / 2))}] {progress:.1f}% | {progress_counter}/{total_rules}", end="")
+                print(f"\r[{'#' * int(progress / 2)}{'-' * (50 - int(progress / 2))}] {progress:.1f}% | {progress_counter}/{total_rules} | 活跃线程: {active_threads}", end="")
     
     print()
     save_resolved_cache(resolved_cache)
     return valid_rules
 
+def load_mylist_rules() -> list[str]:
+    """加载本地人工审查规则"""
+    try:
+        with open(MYLIST_FILE, 'r', encoding='utf-8') as f:
+            rules = f.readlines()
+        # 过滤注释和空行但保留有效规则
+        valid_rules = [
+            rule.strip() for rule in rules
+            if rule.strip() and not rule.strip().startswith(('#', '!', '//'))
+        ]
+        print(f"✅ 加载本地规则 {MYLIST_FILE} | 有效规则数：{len(valid_rules)}")
+        return valid_rules
+    except FileNotFoundError:
+        print(f"⚠️ 未找到本地规则文件 {MYLIST_FILE}，跳过加载")
+        return []
+    except Exception as e:
+        print(f"❌ 加载本地规则失败：{str(e)}")
+        return []
+
 def generate_final_file(rules: list[str]):
-    """生成最终的合并规则文件"""
+    """生成最终的合并规则文件，包含本地规则"""
     from datetime import datetime
     current_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    
+    # 加载并合并本地规则
+    mylist_rules = load_mylist_rules()
+    final_rules = rules + mylist_rules
+    # 去重处理
+    final_rules = list(sorted(set(final_rules)))
     
     header = f"""# AdGuard Home 合并规则文件
 # 自动生成：下载上游规则 → 格式转换 → 泛化合并 → 冲突处理 → 无效域名过滤
 # 上游规则来源：
 {chr(10).join([f"- {url}" for url in UPSTREAM_RULES])}
-# 规则数量：{len(rules)}  # 用于README自动提取（请勿修改此行格式）
+# 规则数量：{len(final_rules)}  # 用于README自动提取（请勿修改此行格式）
 # 最后更新时间：{current_time}  # 用于README自动提取（请勿修改此行格式）
 # 维护者：guandasheng（GitHub 用户名）
 # 定时更新：每 8 小时自动同步上游规则
@@ -253,40 +328,35 @@ def generate_final_file(rules: list[str]):
 # 2. 数字后缀子域名自动泛化（如 a36243.actonservice.com → a*.actonservice.com）
 # 3. 黑白名单冲突时，优先保留白名单规则
 # 4. 相同域名保留带 $important 优先级的规则
-# 5. 过滤无法解析的无效域名（多线程处理）
-# 6. 所有规则已去重并按域名排序
-
+# 5. 自动过滤无效域名，优化了解析超时问题
 """
-    
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        f.write(header)
-        f.write("\n".join(rules))
-    
-    print(f"\n🎉 合并完成！文件已保存至：{OUTPUT_FILE}")
-    print(f"📊 最终规则数量：{len(rules)}")
-
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+        f.write(header + '\n'.join(final_rules) + '\n')
+    print(f"✅ 规则文件生成完成，保存至 {OUTPUT_FILE}（共 {len(final_rules)} 条规则）")
 
 def main():
-    print("===== AdGuard Home 规则整合工具（多线程优化版） =====")
-    print(f"📥 正在下载 {len(UPSTREAM_RULES)} 个上游规则...")
+    """主函数：执行规则下载、合并、过滤、生成完整流程"""
+    print("====== 开始执行 AdGuard Home 规则合并 ======")
     
+    # 1. 下载所有上游规则
     all_rules = []
     for url in UPSTREAM_RULES:
         rules = download_rule(url)
         all_rules.extend(rules)
+    print(f"📊 下载完成，原始规则总数：{len(all_rules)}")
     
-    print(f"\n📦 总下载规则数：{len(all_rules)}")
-    if len(all_rules) == 0:
-        print("⚠️ 警告：未获取到任何有效规则，可能上游链接全部失效")
-        return
-    
-    print("🔧 正在整合规则（泛化合并 + 优先级处理 + 冲突解决）...")
+    # 2. 合并去重规则
     merged_rules = merge_rules(all_rules)
+    print(f"🔗 规则合并完成，去重后总数：{len(merged_rules)}")
     
-    print("🔍 正在过滤无效域名（多线程模式）...")
+    # 3. 过滤无效域名（核心优化部分）
     valid_rules = filter_unresolvable_domains(merged_rules)
+    print(f"🎯 无效域名过滤完成，有效规则数：{len(valid_rules)}")
     
+    # 4. 生成最终规则文件
     generate_final_file(valid_rules)
+    print("====== 规则合并流程执行完毕 ======")
 
 if __name__ == "__main__":
+    import concurrent.futures  # 确保导入用于超时控制
     main()
