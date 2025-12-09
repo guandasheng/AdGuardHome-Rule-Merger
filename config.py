@@ -31,6 +31,6 @@ EXCLUDED_PREFIXES = (
 )
 
 # 新增配置（仅保留223.5.5.5作为DNS解析服务器）
-DNS_SERVERS = ["223.5.5.5"]  # 仅使用223.5.5.5进行域名解析
+DNS_SERVERS = ["223.5.5.5", "223.6.6.6", "114.114.114.114"]  # 主DNS+备用DNS
 RESOLVED_CACHE_FILE = "resolved_domains.json"  # 解析缓存文件
 MYLIST_FILE = "mylist.txt"  # 人工审查规则文件
