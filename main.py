@@ -3,7 +3,7 @@ import re
 import json
 import threading
 from collections import defaultdict
-from concurrent.futures import Thread, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed  # 移除Thread导入
 from config import UPSTREAM_RULES, OUTPUT_FILE, SUPPORTED_RULE_TYPES, EXCLUDED_PREFIXES, DNS_SERVERS, RESOLVED_CACHE_FILE
 
 # 线程安全的计数器和锁
