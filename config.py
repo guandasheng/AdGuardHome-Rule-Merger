@@ -27,3 +27,11 @@ EXCLUDED_PREFIXES = (
     "||$",        # 无域名的规则（无效）
     "adguard_",   # AdGuard 专属配置
 )
+# DNS 服务器配置（用于域名解析验证）
+DNS_SERVERS = ["223.5.5.5", "8.8.8.8"]
+
+# 已解析域名缓存文件
+RESOLVED_CACHE_FILE = "resolved_domains.json"
+
+# 人工审查规则文件
+MYLIST_FILE = "mylist.txt"
