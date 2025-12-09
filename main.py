@@ -1,7 +1,6 @@
 import requests
 import re
 from collections import defaultdict
-from datetime import datetime
 from config import UPSTREAM_RULES, OUTPUT_FILE, SUPPORTED_RULE_TYPES, EXCLUDED_PREFIXES
 
 def download_rule(url: str) -> list[str]:
@@ -10,11 +9,13 @@ def download_rule(url: str) -> list[str]:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        response = requests.get(url, headers=headers, timeout=60)
+        # 增加超时重试机制
+        response = requests.get(url, headers=headers, timeout=60, allow_redirects=True)
         response.raise_for_status()
-        response.encoding = response.apparent_encoding or "utf-8"
+        # 强制使用utf-8编码，避免解析乱码
+        response.encoding = "utf-8"
         rules = response.text.split("\n")
-        comment_prefixes = EXCLUDED_PREFIXES[:3]  # 取前3个注释前缀
+        comment_prefixes = EXCLUDED_PREFIXES[:3]
         valid_rules = [
             rule.strip() for rule in rules
             if rule.strip() and not rule.strip().startswith(comment_prefixes)
@@ -103,10 +104,8 @@ def merge_rules(all_rules: list[str]) -> list[str]:
         
         # 白名单优先级 > 黑名单
         if is_whitelist:
-            # 白名单内部：带important优先级更高
             if is_whitelist not in domain_group:
                 domain_group[is_whitelist] = {}
-            # 保留带important的规则，或更新为带important的规则
             if has_important or not domain_group[is_whitelist]:
                 domain_group[is_whitelist][has_important] = full_rule
         else:
@@ -114,24 +113,20 @@ def merge_rules(all_rules: list[str]) -> list[str]:
             if True not in domain_group:  # 无白名单
                 if is_whitelist not in domain_group:
                     domain_group[is_whitelist] = {}
-                # 黑名单内部：带important优先级更高
                 if has_important or not domain_group[is_whitelist]:
                     domain_group[is_whitelist][has_important] = full_rule
     
     # 生成最终规则列表
     final_rules = []
     for domain, groups in rule_groups.items():
-        # 优先选择白名单
         if True in groups:  # 存在白名单
             whitelist_group = groups[True]
-            # 优先选择带important的白名单
             if True in whitelist_group:
                 final_rules.append(whitelist_group[True])
             else:
                 final_rules.append(next(iter(whitelist_group.values())))
         else:  # 仅黑名单
             blacklist_group = groups[False]
-            # 优先选择带important的黑名单
             if True in blacklist_group:
                 final_rules.append(blacklist_group[True])
             else:
@@ -143,14 +138,16 @@ def merge_rules(all_rules: list[str]) -> list[str]:
 
 def generate_final_file(rules: list[str]):
     """生成最终的合并规则文件"""
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # 精确到秒
+    from datetime import datetime
+    # 强制使用UTC时间，与GitHub Actions时间格式统一
+    current_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     
     header = f"""# AdGuard Home 合并规则文件
 # 自动生成：下载上游规则 → 格式转换 → 泛化合并 → 冲突处理
 # 上游规则来源：
 {chr(10).join([f"- {url}" for url in UPSTREAM_RULES])}
-# 规则数量：{len(rules)}  # 用于README自动提取
-# 最后更新时间：{current_time}  # 精确到秒，用于README自动提取
+# 规则数量：{len(rules)}  # 用于README自动提取（请勿修改此行格式）
+# 最后更新时间：{current_time}  # 用于README自动提取（请勿修改此行格式）
 # 维护者：guandasheng（GitHub 用户名）
 # 定时更新：每 8 小时自动同步上游规则
 # 优化说明：
@@ -180,8 +177,10 @@ def main():
         all_rules.extend(rules)
     
     print(f"\n📦 总下载规则数：{len(all_rules)}")
-    print("🔧 正在整合规则（泛化合并 + 优先级处理 + 冲突解决）...")
+    if len(all_rules) == 0:
+        print("⚠️ 警告：未获取到任何有效规则，可能上游链接全部失效")
     
+    print("🔧 正在整合规则（泛化合并 + 优先级处理 + 冲突解决）...")
     merged_rules = merge_rules(all_rules)
     generate_final_file(merged_rules)
 
