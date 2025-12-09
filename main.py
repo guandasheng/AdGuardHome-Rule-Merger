@@ -1,23 +1,51 @@
 import requests
 import re
+import json
+import time
 from collections import defaultdict
-from config import UPSTREAM_RULES, OUTPUT_FILE, EXCLUDED_PREFIXES, MYLIST_FILE
+from config import UPSTREAM_RULES, OUTPUT_FILE, SUPPORTED_RULE_TYPES, EXCLUDED_PREFIXES, DNS_SERVERS, RESOLVED_CACHE_FILE
+import dns.resolver  # 需要新增这个依赖
 
-def load_mylist_rules() -> list[str]:
-    """加载本地mylist规则，过滤注释和空行"""
+def print_progress(current, total, status=""):
+    """显示进度条"""
+    percent = current / total * 100 if total > 0 else 100
+    bar_length = 40
+    filled_length = int(bar_length * current // total) if total > 0 else bar_length
+    bar = '=' * filled_length + '-' * (bar_length - filled_length)
+    print(f'\r[{bar}] {percent:.1f}% | {current}/{total} | {status}', end='', flush=True)
+    if current == total:
+        print()  # 进度完成后换行
+
+def load_resolved_cache():
+    """加载已解析的域名缓存"""
     try:
-        with open(MYLIST_FILE, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-        # 过滤注释（#/!/\/\/开头）和空行
-        valid_rules = [
-            line.strip() for line in lines
-            if line.strip() and not line.strip().startswith(('#', '!', '//'))
-        ]
-        print(f"✅ 成功加载本地规则 {MYLIST_FILE} | 有效规则数：{len(valid_rules)}")
-        return valid_rules
-    except Exception as e:
-        print(f"❌ 加载本地规则失败 {MYLIST_FILE} | 错误：{str(e)}")
-        return []
+        with open(RESOLVED_CACHE_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_resolved_cache(cache):
+    """保存域名解析缓存"""
+    with open(RESOLVED_CACHE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
+
+def resolve_domain(domain, dns_servers):
+    """解析域名，返回是否有效"""
+    for server in dns_servers:
+        resolver = dns.resolver.Resolver()
+        resolver.nameservers = [server]
+        resolver.timeout = 5
+        resolver.lifetime = 5
+        
+        try:
+            answers = resolver.resolve(domain, 'A')
+            for answer in answers:
+                ip = str(answer)
+                if ip != '0.0.0.0':
+                    return True
+        except (dns.resolver.NXDOMAIN, dns.resolver.Timeout, dns.resolver.NoAnswer):
+            continue
+    return False
 
 def download_rule(url: str) -> list[str]:
     """下载单个上游规则，返回有效规则列表（过滤注释/空行）"""
@@ -55,8 +83,8 @@ def convert_hosts_to_adguard(rule: str) -> str | None:
         return f"||{domain}^"
     return None
 
-def extract_rule_parts(rule: str) -> tuple[str, str, bool, bool]:
-    """解析规则：返回（基础域名/泛化域名, 完整规则, 是否白名单, 是否带important）"""
+def extract_rule_parts(rule: str) -> tuple[str, str, bool, bool, str]:
+    """解析规则：返回（基础域名/泛化域名, 完整规则, 是否白名单, 是否带important, 原始域名）"""
     # 匹配白名单规则 @@||域名^$参数 或 @@||域名^
     whitelist_pattern = r"^@@\|\|([a-zA-Z0-9.-]+\.[a-zA-Z]+)(\^.*)?$"
     # 匹配黑名单规则 ||域名^$参数 或 ||域名^
@@ -66,12 +94,14 @@ def extract_rule_parts(rule: str) -> tuple[str, str, bool, bool]:
     has_important = False
     base_domain = ""
     generalized_domain = ""
+    original_domain = ""
     
     # 处理白名单
     whitelist_match = re.match(whitelist_pattern, rule)
     if whitelist_match:
         is_whitelist = True
-        base_domain = whitelist_match.group(1)
+        original_domain = whitelist_match.group(1)
+        base_domain = original_domain
         params = whitelist_match.group(2) or ""
         if "$important" in params:
             has_important = True
@@ -79,7 +109,8 @@ def extract_rule_parts(rule: str) -> tuple[str, str, bool, bool]:
         # 处理黑名单
         blacklist_match = re.match(blacklist_pattern, rule)
         if blacklist_match:
-            base_domain = blacklist_match.group(1)
+            original_domain = blacklist_match.group(1)
+            base_domain = original_domain
             params = blacklist_match.group(2) or ""
             if "$important" in params:
                 has_important = True
@@ -93,62 +124,41 @@ def extract_rule_parts(rule: str) -> tuple[str, str, bool, bool]:
         else:
             generalized_domain = base_domain
     
-    return (generalized_domain, rule, is_whitelist, has_important)
+    return (generalized_domain, rule, is_whitelist, has_important, original_domain)
 
-def merge_rules(mylist_rules: list[str], upstream_rules: list[str]) -> list[str]:
-    """整合规则：本地规则优先，泛化合并、黑白名单冲突处理、优先级保留"""
+def merge_rules(all_rules: list[str]) -> list[str]:
+    """整合规则：泛化合并、黑白名单冲突处理、优先级保留"""
     rule_groups = defaultdict(dict)  # key: 泛化域名, value: {is_whitelist: {has_important: rule}}
-    mylist_domains = set()  # 存储mylist中已有的泛化域名
     
-    # 第一步：处理本地规则（最高优先级）
-    for rule in mylist_rules:
+    for i, rule in enumerate(all_rules):
+        # 显示处理进度
+        print_progress(i + 1, len(all_rules), f"处理规则: {rule[:50]}...")
+        
+        # 转换 Hosts 规则
         converted_rule = convert_hosts_to_adguard(rule)
         final_rule = converted_rule if converted_rule else rule
         
+        # 过滤不支持的规则
         if not any(final_rule.startswith(prefix) for prefix in ["||", "@@||"]):
             continue
         
-        generalized_domain, full_rule, is_whitelist, has_important = extract_rule_parts(final_rule)
+        # 解析规则部分
+        generalized_domain, full_rule, is_whitelist, has_important, _ = extract_rule_parts(final_rule)
         if not generalized_domain:
             continue
         
-        # 添加到本地域名集合
-        mylist_domains.add(generalized_domain)
-        
-        # 存储本地规则
+        # 按泛化域名分组处理
         domain_group = rule_groups[generalized_domain]
-        if is_whitelist not in domain_group:
-            domain_group[is_whitelist] = {}
-        # 本地规则直接覆盖，不考虑是否有important
-        domain_group[is_whitelist][has_important] = full_rule
-    
-    # 第二步：处理上游规则（仅保留本地规则中不存在的泛化域名）
-    for rule in upstream_rules:
-        converted_rule = convert_hosts_to_adguard(rule)
-        final_rule = converted_rule if converted_rule else rule
         
-        if not any(final_rule.startswith(prefix) for prefix in ["||", "@@||"]):
-            continue
-        
-        generalized_domain, full_rule, is_whitelist, has_important = extract_rule_parts(final_rule)
-        if not generalized_domain:
-            continue
-        
-        # 若泛化域名已存在于本地规则，则跳过上游规则
-        if generalized_domain in mylist_domains:
-            continue
-        
-        # 处理上游规则
-        domain_group = rule_groups[generalized_domain]
+        # 白名单优先级 > 黑名单
         if is_whitelist:
             if is_whitelist not in domain_group:
                 domain_group[is_whitelist] = {}
-            # 上游规则：有important的优先，或者当前没有规则时添加
             if has_important or not domain_group[is_whitelist]:
                 domain_group[is_whitelist][has_important] = full_rule
         else:
             # 黑名单：仅当没有白名单时才处理
-            if True not in domain_group:
+            if True not in domain_group:  # 无白名单
                 if is_whitelist not in domain_group:
                     domain_group[is_whitelist] = {}
                 if has_important or not domain_group[is_whitelist]:
@@ -159,7 +169,6 @@ def merge_rules(mylist_rules: list[str], upstream_rules: list[str]) -> list[str]
     for domain, groups in rule_groups.items():
         if True in groups:  # 存在白名单
             whitelist_group = groups[True]
-            # 优先选择带important的规则
             if True in whitelist_group:
                 final_rules.append(whitelist_group[True])
             else:
@@ -175,16 +184,58 @@ def merge_rules(mylist_rules: list[str], upstream_rules: list[str]) -> list[str]
     final_rules.sort()
     return final_rules
 
+def filter_unresolvable_domains(rules):
+    """过滤无法解析的域名规则"""
+    resolved_cache = load_resolved_cache()
+    valid_rules = []
+    new_entries = 0
+    
+    print(f"\n🔍 开始验证域名解析状态（使用DNS服务器: {', '.join(DNS_SERVERS)}）")
+    time.sleep(0.1)  # 确保输出能被正确捕获
+    
+    for i, rule in enumerate(rules):
+        # 提取原始域名
+        _, _, _, _, original_domain = extract_rule_parts(rule)
+        if not original_domain:
+            valid_rules.append(rule)
+            print_progress(i + 1, len(rules), f"跳过无效格式规则")
+            continue
+        
+        # 检查缓存
+        if original_domain in resolved_cache:
+            if resolved_cache[original_domain]:
+                valid_rules.append(rule)
+            print_progress(i + 1, len(rules), f"已缓存 - {original_domain}")
+            continue
+        
+        # 需要解析的新域名
+        new_entries += 1
+        is_valid = resolve_domain(original_domain, DNS_SERVERS)
+        resolved_cache[original_domain] = is_valid
+        
+        if is_valid:
+            valid_rules.append(rule)
+            status = f"有效 - {original_domain}"
+        else:
+            status = f"无效 - {original_domain}"
+        
+        print_progress(i + 1, len(rules), status)
+        time.sleep(0.01)  # 稍微延迟，避免输出过快
+    
+    # 保存更新后的缓存
+    save_resolved_cache(resolved_cache)
+    print(f"\n📊 域名验证完成：总规则 {len(rules)}，有效规则 {len(valid_rules)}，新增缓存 {new_entries}")
+    return valid_rules
+
 def generate_final_file(rules: list[str]):
     """生成最终的合并规则文件"""
     from datetime import datetime
     current_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     
     header = f"""# AdGuard Home 合并规则文件
-# 自动生成：下载上游规则 → 格式转换 → 泛化合并 → 冲突处理
+# 自动生成：下载上游规则 → 格式转换 → 泛化合并 → 冲突处理 → 域名解析验证
 # 上游规则来源：
 {chr(10).join([f"- {url}" for url in UPSTREAM_RULES])}
-# 本地规则来源：{MYLIST_FILE}
 # 规则数量：{len(rules)}  # 用于README自动提取（请勿修改此行格式）
 # 最后更新时间：{current_time}  # 用于README自动提取（请勿修改此行格式）
 # 维护者：guandasheng（GitHub 用户名）
@@ -192,9 +243,10 @@ def generate_final_file(rules: list[str]):
 # 优化说明：
 # 1. Hosts 规则已转换为 AdGuard 格式（||域名^）
 # 2. 数字后缀子域名自动泛化（如 a36243.actonservice.com → a*.actonservice.com）
-# 3. 本地规则(mylist.txt)优先级最高，会覆盖上游所有相同域名规则
+# 3. 黑白名单冲突时，优先保留白名单规则
 # 4. 相同域名保留带 $important 优先级的规则
 # 5. 所有规则已去重并按域名排序
+# 6. 已过滤无法解析或解析为0.0.0.0的域名
 
 """
     
@@ -208,25 +260,28 @@ def generate_final_file(rules: list[str]):
 
 def main():
     print("===== AdGuard Home 规则整合工具（优化版） =====")
-    
-    # 加载本地规则
-    mylist_rules = load_mylist_rules()
-    
-    # 下载上游规则
     print(f"📥 正在下载 {len(UPSTREAM_RULES)} 个上游规则...")
-    all_upstream_rules = []
-    for url in UPSTREAM_RULES:
+    
+    all_rules = []
+    for i, url in enumerate(UPSTREAM_RULES):
+        print(f"[{i+1}/{len(UPSTREAM_RULES)}] 下载中: {url}")
         rules = download_rule(url)
-        all_upstream_rules.extend(rules)
+        all_rules.extend(rules)
+        print_progress(i + 1, len(UPSTREAM_RULES), f"已下载 {len(all_rules)} 条规则")
     
-    print(f"\n📦 本地规则数：{len(mylist_rules)} | 上游总规则数：{len(all_upstream_rules)}")
-    if len(mylist_rules) == 0 and len(all_upstream_rules) == 0:
+    print(f"\n📦 总下载规则数：{len(all_rules)}")
+    if len(all_rules) == 0:
         print("⚠️ 警告：未获取到任何有效规则，可能上游链接全部失效")
+        return
     
-    # 合并规则（本地规则优先）
-    print("🔧 正在整合规则（本地规则优先 + 泛化合并 + 优先级处理）...")
-    merged_rules = merge_rules(mylist_rules, all_upstream_rules)
-    generate_final_file(merged_rules)
+    print("\n🔧 正在整合规则（泛化合并 + 优先级处理 + 冲突解决）...")
+    merged_rules = merge_rules(all_rules)
+    print(f"🔧 规则整合完成，合并后规则数：{len(merged_rules)}")
+    
+    # 过滤无法解析的域名
+    valid_rules = filter_unresolvable_domains(merged_rules)
+    
+    generate_final_file(valid_rules)
 
 if __name__ == "__main__":
     main()
