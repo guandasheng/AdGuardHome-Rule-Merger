@@ -21,7 +21,7 @@ jobs:
           python-version: '3.10'
 
       - name: 安装依赖包
-        run: pip install requests
+        run: pip install requests dnspython  # 新增dnspython依赖
 
       - name: 运行规则整合脚本
         run: python main.py
@@ -44,7 +44,7 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add merged_rules.txt README.md  # 同时提交规则文件和更新后的 README
+          git add merged_rules.txt README.md resolved_domains.json  # 新增缓存文件提交
           if git diff --staged --quiet; then
             echo "无更改，跳过提交"
           else
