@@ -1,8 +1,10 @@
 # 上游规则链接列表（可根据需求增减）
 UPSTREAM_RULES = [
     "https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt",
-    "https://raw.githubusercontent.com/hululu1068/AdGuard-Rule/main/rule/adgh.txt",
+    "https://raw.githubusercontent.com/lingeringsound/10007_auto/master/all",
     "https://pan.qzyun.net/f/mlQiN/20251129.txt",
+    "https://anti-ad.net/easylist.txt",
+    "https://adrules.top/dns.txt",
 ]
 
 # 输出文件路径（根目录）
@@ -27,11 +29,8 @@ EXCLUDED_PREFIXES = (
     "||$",        # 无域名的规则（无效）
     "adguard_",   # AdGuard 专属配置
 )
-# DNS 服务器配置（用于域名解析验证）
-DNS_SERVERS = ["223.5.5.5", "8.8.8.8"]
 
-# 已解析域名缓存文件
-RESOLVED_CACHE_FILE = "resolved_domains.json"
-
-# 人工审查规则文件
-MYLIST_FILE = "mylist.txt"
+# 新增配置
+DNS_SERVERS = ["223.5.5.5", "8.8.8.8"]  # DNS解析服务器
+RESOLVED_CACHE_FILE = "resolved_domains.json"  # 解析缓存文件
+MYLIST_FILE = "mylist.txt"  # 人工审查规则文件
